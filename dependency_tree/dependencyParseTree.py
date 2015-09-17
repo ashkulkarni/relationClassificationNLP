@@ -1,0 +1,224 @@
+import networkx as nx
+import matplotlib.pyplot as plt
+import pandas as pd
+from sklearn.svm import SVC
+from sklearn.metrics import classification_report
+from sklearn import linear_model
+import sys
+import numpy as np
+
+
+ftentity = open('all_entities_test_dependency.tsv')
+ftentity2 = open('all_entities_train_dependency.tsv')
+
+all_entities = set()
+train_entites = []
+test_entities = []
+
+for line in ftentity:
+	train_entites = line.split("\t")
+for line in ftentity2:
+	test_entities = line.split("\t")
+
+all_entities.update(set(train_entites))
+all_entities.update(set(test_entities))
+
+flag = False
+
+
+def featureClosestEntity(G,entity_list,entity1,entity2):
+	G_un = G.to_undirected()
+	len1 = len(nx.shortest_path(G_un,source=entity1,target=entity2))
+	print "length:", len1
+	all_nodes = G_un.nodes()
+	minimum_list = list()
+	minimum = 999999
+	for entity in entity_list:
+		if entity in all_nodes:
+			print "Other entity:",entity
+			minimum_list.append(len(nx.shortest_path(G_un,source=entity,target=entity2)))
+			minimum_list.append(len(nx.shortest_path(G_un,source=entity,target=entity1)))
+	if(len(minimum_list)!=0):
+		minimum = min(minimum_list)
+	if len1 > minimum:
+		print "Lesser length"
+		return "0"
+	else: 
+		return "1"
+
+def shortestPathLengthListCommonAncestor(G,entity1,entity2):
+        G_un = G.to_undirected()
+        between_words = nx.shortest_path(G_un,source=entity1,target=entity2)
+        flag = 0
+        if 'ROOT-0' in G.nodes():
+	    rootword = G['ROOT-0'].keys()[0]
+	    print " rootword ",rootword
+           
+        if rootword in between_words:
+           flag = 1
+           print " Root word present " 
+        else:
+           print " Root word not present " 
+        for i in range(0,len(between_words)):
+            between_words[i] = between_words[i].rsplit("-",1)[0] 
+        return between_words,len(between_words),flag
+
+
+def extractDependencyFeatures(filename):
+		f = open(filename+"_dependency_12000.txt", "w")
+	        f_words = open(filename+"_words_dependency_12000.txt","w")
+		fp = open(filename)
+		feature_list=[]
+		class_labels=[]
+		entity1 = ""
+		entity2 = ""
+		count =0
+		for line in fp:
+		    print count
+		    count = count+1
+		    G=nx.DiGraph()
+		    plt.clf()
+		    features=[]
+		    edge_tuples = line.split("\t")
+		    entity1,entity2,classLabel,formatedSentence = edge_tuples[-1].split("||")
+
+		    entity1 = entity1.strip()
+		    entity2 = entity2.strip()
+
+		    entity1Exist=0
+		    entity1list = entity1.rsplit("-",1)
+		    if entity1list[-1]=="1":
+		    	if entity1list[-2][-1]=="-":
+		    		entity1Exist = -1
+		    		entity1 = entity1list[-2][:-1].strip()
+	                        #print "Entity1 not present= ", entity1
+
+		    entity2Exist=0
+		    entity2list = entity2.rsplit("-",1)
+		    if entity2list[-1]=="1":
+		      if entity2list[-2][-1]=="-":
+		        entity2Exist = -1
+		        entity2 = entity2list[-2][:-1].strip()
+	                #print "Entity2 not present= ", entity2
+
+		    for edTup in edge_tuples[:-1]:
+		        attr,parent,child = edTup.split("||")
+
+		        attr = attr.strip()
+		        parent = parent.strip()
+		        child = child.strip()
+
+		        ptag = parent.rsplit('/',1)[1]
+		        ctag = child.rsplit('/',1)[1]
+		        parent = parent.rsplit('/',1)[0]
+		        child = child.rsplit('/',1)[0]
+		#         if attr == "root":
+		#             continue
+		        if entity1Exist== -1:
+		        	if child.find(entity1)!=-1:
+	                                #print "Entity1 replaced"
+		        		entity1 = child
+		        if entity2Exist == -1:
+		        	if child.find(entity2)!=-1:
+	                                #print "Entity2 replaced"
+		        		entity2 = child
+		        G.add_edge(parent,child)
+		        G[parent][child]['rel'] = attr
+
+			#Feature two -- for predicting "from root"
+	            print "Final Entity1: ",entity1
+	            print "Final Entity2: ",entity2
+
+                    try:
+                   	 between_words,length,flag = shortestPathLengthListCommonAncestor(G,entity1,entity2)
+                     	 features.append(str(length))
+                     	 features.append(str(flag))
+                    except:
+                         between_words =[]
+                         features.append("0")
+                         features.append("0")  
+                     	 print "Unexpected error from my features:", sys.exc_info()[0]
+
+	            try:
+			features.append(featureSuccessor(G,entity1,entity2))
+	            except:
+	                   features.append("0")
+	                   print "Unexpected error:", sys.exc_info()[0]
+	            try:
+			features.append(featureClosestEntity(G,all_entities,entity1,entity2))
+	            except:
+	                   features.append("1")
+	                   print "Unexpected error:", sys.exc_info()[0]
+		    print " Words : ",between_words
+		    print features
+                    
+                    f_words.write("\t".join(between_words)) 
+		    f_words.write("\n")
+		    f.write("\t".join(features))
+		    f.write("\n")
+
+		    class_labels.append(classLabel)
+		    feature_list.append(features)
+	    # nx.draw_networkx(G)
+	    # plt.show()
+		return feature_list,class_labels    
+
+def featureOne(G,entity1,entity2):
+    if 'ROOT-0' not in G.nodes():
+        return 0
+    rootword = G['ROOT-0'].keys()[0]
+    edgeAttr = G[rootword]
+    attrOne = 0
+    attrTwo = 0
+    for node in edgeAttr.keys():
+        if edgeAttr[node]['rel']=='nsubj':
+            if node==entity2:
+                attrOne = 1
+        if edgeAttr[node]['rel']=='prep_from':
+            if node==entity1:
+                attrTwo = 1
+    return attrOne and attrTwo
+
+def featureTwo(G,entity1,entity2):
+    if 'ROOT-0' not in G.nodes():
+        return 0
+    rootword = G['ROOT-0'].keys()[0]
+    edgeAttr = G[rootword]
+    attrOne = 0
+    attrTwo = 0
+    for node in edgeAttr.keys():
+        if edgeAttr[node]['rel']=='nsubj':
+            if node==entity2:
+                attrOne = 1
+        if edgeAttr[node]['rel']=='prep_at':
+            if node==entity1:
+                attrTwo = 1
+    return attrOne and attrTwo
+
+def featureSuccessor(G,entity1,entity2):
+	if nx.has_path(G,entity1,entity2) or nx.has_path(G,entity2,entity1):
+		return "1"
+	return "0"
+
+
+if __name__ == "__main__":
+
+	train_features,class_labels_train = extractDependencyFeatures('train_dependency.tsv')
+	print train_features
+	test_features,class_labels_test = extractDependencyFeatures('test_dependency.tsv')
+	print test_features
+	
+	clf = linear_model.LogisticRegression()
+
+	print class_labels_train
+	clf.fit(np.array(train_features),np.array(class_labels_train)) 
+	predictions = clf.predict(np.array(test_features))
+	print classification_report(class_labels_test,predictions)
+
+	# M2logisticClassify = linear_model.LogisticRegression()
+	# M2logisticClassify.fit(train_features,class_labels_train)
+	# M2logisticResults = M2logisticClassify.predict(test_features)
+	# prob_dist = pd.DataFrame(M2logisticClassify.predict_proba(test_features))
+	# prob_dist.columns = ['non','win']
+	# high_prob = prob_dist.sort(columns='non', ascending=True).index.values.tolist()[0]
+	# print high_prob
